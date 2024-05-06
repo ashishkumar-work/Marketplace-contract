@@ -1,14 +1,4 @@
 //! # Marketplace Contract
-//!
-//! The marketplace contract enables the creation and management of listings for NFT assets
-//! which are already created and need to be sold.
-//!
-//! It accepts any token that accomplished the token interface for trading. See https://soroban.stellar.org/docs/reference/interfaces/token-interface
-//!
-//! Actually it expects the trustlines to be in-place among NFTs and buyers. There is a work in progress and more information regarding this here: https://github.com/eigerco/nebula/issues/103 .
-//! 
-//! See public function contracts documentation for further explanations regarding the available
-//! actions.
 #![no_std]
 
 use soroban_sdk::{
@@ -28,45 +18,28 @@ enum DataKey {
     LastID = 5,
 }
 
-/// Error enum holds all errors this contract contemplates as part of its
-/// business logic.
+
 #[contracterror]
 #[derive(Clone, Debug, Copy, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    // The contract should not be initialized twice.
+    
     AlreadyInitialized = 1,
-    // Triggered if i.e an asset tried to be submitted with a negative price.
     InvalidAssetPrice = 2,
-    // Some party has not enough funds to complete the operation.
     BalanceTooLow = 3,
-    // Triggered when a marketplace operation is tried over a non existent asset.
     AssetNotListed = 4,
-    // Triggered if any of the functions of this contract are tried.
     NotInitialized = 6,
-    // Asset quantities cannot be under zero.
     InvalidQuantity = 7,
 }
 
-/// Asset represents a listed asset.
 #[contracttype]
 #[derive(Clone)]
 pub struct Asset {
-    // This is an auto increment id provided by the contract in the moment
-    // of creation.
     id: u64,
-    // The address of the asset token contract.
     asset_address: Address,
-    // The owner true of the contract. As the ownership temporary changes to the contract
-    // itself, so able to act on behalf of the user, we need a return address in case the
-    // original owner wants to recover the asset.
     owner: Address,
-    // The price of the asset in the listing.
     price: i128,
-    // The quantity of assets to sell on an specific listing.
     quantity: i128,
-    // This property is responsible of determining if a buy operation can happen. Actually,
-    // used for pausing the listing of an asset.
     listed: bool,
 }
 
@@ -77,16 +50,6 @@ pub struct MarketplaceContract;
 
 #[contractimpl]
 impl MarketplaceContract {
-    /// It initializes the contract with all the needed parameters.
-    /// This function must be invoked by the administrator just
-    /// after the contract deployment. No other actions can be
-    /// performed before this one.
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `token` - The address of the token the contract his contract will use as trading pair. (i.e NFT for XLM)
-    /// - `admin` - The address that can create proposals.
     pub fn init(env: Env, token: Address, admin: Address) {
         admin.require_auth();
         let storage = env.storage().persistent();
@@ -102,17 +65,10 @@ impl MarketplaceContract {
         storage.set(&DataKey::LastID, &1u64);
     }
 
-    /// This is a workaround for an under investigation bug. See https://github.com/eigerco/nebula/issues/41.
     pub fn register(_: Env, trader: Address) {
         trader.require_auth();
     }
 
-    /// It gets a listing based on an asset id
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `id` - Id of the asset, previously facilitated by the ['create_listing'] operation.
     pub fn get_listing(env: Env, id: u64) -> Option<Asset> {
         let storage = env.storage().persistent();
         Self::must_be_initialized(&env, &storage);
@@ -120,16 +76,7 @@ impl MarketplaceContract {
         assets.get(id)
     }
 
-    /// Allow sellers to list assets. After this operation, the ownership of the assets will
-    /// pass to this contract.
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `seller` - The address of the account that wants to sell. Authorization will be enforced.
-    /// - `asset` - The address of the NFT to be listed. It should accomplish the token interface. See https://soroban.stellar.org/docs/reference/interfaces/token-interface .
-    /// - `price` - The price of each element of the listing, in the trading token specified in the ['init'] function.
-    /// - `quantity` - The amount of the same NFT that is being sold.
+
     pub fn create_listing(
         env: Env,
         seller: Address,
@@ -189,16 +136,6 @@ impl MarketplaceContract {
         id
     }
 
-    /// Enable buyers to purchase any of the listed assets.
-    /// They must not be "paused" or an error will be raised.
-    /// When this operation completes, the asset will be removed
-    /// from the listing.
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `buyer` - Address of the account that is buying the current offer.
-    /// - `id` - The id of the offer to be bought.
     pub fn buy_listing(env: Env, buyer: Address, id: u64) {
         buyer.require_auth();
         let storage = env.storage().persistent();
@@ -235,13 +172,6 @@ impl MarketplaceContract {
         env.events().publish(topics, id);
     }
 
-    /// Permit sellers to update the price of a listed asset
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `id` - The id of the listed asset to be updated.
-    /// - `new_price` - The new, updated price.
     pub fn update_price(env: Env, id: u64, new_price: i128) {
         if new_price <= 0 {
             panic_with_error!(&env, Error::InvalidAssetPrice);
@@ -279,13 +209,6 @@ impl MarketplaceContract {
         env.events().publish(topics, id);
     }
 
-    /// Allow sellers to pause a listing. No buy operation can be performed on this listing from this point,
-    /// unless ['unpause_listing'] is called.
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `id` - The id of the listed asset to be paused.
     pub fn pause_listing(env: Env, id: u64) {
         let storage = env.storage().persistent();
 
@@ -318,12 +241,6 @@ impl MarketplaceContract {
         env.events().publish(topics, id);
     }
 
-    /// Allow sellers to un-pause a previously paused listing. Buy operations are enabled again on this listing from this point.
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `id` - The id of the listed asset to be unpaused.
     pub fn unpause_listing(env: Env, id: u64) {
         let storage = env.storage().persistent();
 
@@ -356,14 +273,6 @@ impl MarketplaceContract {
         let topics = (Symbol::new(&env, "unpause_listing"), (owner));
         env.events().publish(topics, id);
     }
-
-    /// Allow sellers to completely remove a listing. This operation cannot be undone and
-    /// will return all the balances to the respective owners (sellers).
-    ///
-    /// # Arguments
-    ///
-    /// - `env` - The environment for this contract.
-    /// - `id` - The id of the listed asset to be removed.
     pub fn remove_listing(env: Env, id: u64) {
         let storage = env.storage().persistent();
 
