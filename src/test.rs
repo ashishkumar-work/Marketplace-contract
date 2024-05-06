@@ -271,16 +271,16 @@ fn can_complete_a_sell_operation() {
         (buyer.clone(), id).into_val(&env),
     );
 
-    assert_eq!(asset_client.balance(&contract_client.address), 0); // Contract no longer the owner of the NFTS.
-    assert_eq!(asset_client.balance(&seller), 0); // Now the seller has no NFTs.
-    assert_eq!(asset_client.balance(&buyer), 2); // Now the buyer has the ownership of the NFTs.
+    assert_eq!(asset_client.balance(&contract_client.address), 0); 
+    assert_eq!(asset_client.balance(&seller), 0); 
+    assert_eq!(asset_client.balance(&buyer), 2); 
 
     assert_eq!(
-        &token_client.balance(&seller), // Seller has 200 tokens more.
+        &token_client.balance(&seller),
         &200
     );
     assert_eq!(
-        &token_client.balance(&buyer), // Buyer has 200 tokes less.
+        &token_client.balance(&buyer), 
         &0
     );
 
@@ -297,7 +297,7 @@ fn can_complete_a_sell_operation() {
         ]
     );
 
-    // After sell operation, the listing is removed.
+
     assert!(contract_client.get_listing(&id).is_none())
 }
 
