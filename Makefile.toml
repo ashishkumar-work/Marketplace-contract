@@ -1,0 +1,297 @@
+extend = "../Makefile.toml"
+
+[env]
+friendbot = "https://friendbot.stellar.org/"
+network = "testnet"
+server = "https://horizon-testnet.stellar.org/"
+
+[env.standalone]
+friendbot = "http://localhost:8000/friendbot"
+network = "standalone"
+server = "http://localhost:8000/"
+
+[env.testnet]
+friendbot = "https://horizon-testnet.stellar.org/friendbot"
+network = "testnet"
+server = "https://horizon-testnet.stellar.org"
+
+[tasks.run_standalone_server]
+script = '''
+  docker run --rm -it \
+    -p 8000:8000 \
+    --name stellar \
+    stellar/quickstart:soroban-dev@sha256:a6b03cf6b0433c99f2f799b719f0faadbb79684b1b763e7674ba749fb0f648ee \
+    --standalone \
+    --enable-soroban-rpc
+'''
+
+[tasks.create_account_admin]
+plugin = "retry_script"
+script_runner = "@shell"
+script = '''
+  soroban config identity generate admin
+  curl "${friendbot}?addr=$(soroban config identity address admin)"
+'''
+
+# trader_1 is the seller
+# trader_2 and trader_3 are buyers
+[tasks.create_traders]
+plugin = "retry_script"
+script = '''
+  for TRADER in 1 2 3
+  do
+    soroban config identity generate trader_$TRADER
+    curl "${friendbot}?addr=$(soroban config identity address trader_$TRADER)"
+  done
+'''
+
+[tasks.accounts]
+dependencies = ["create_account_admin", "create_traders"]
+
+[tasks.generate_asset_issuer_account]
+script = '''
+  soroban config identity generate asset_issuer_account
+  curl "${friendbot}?addr=$(soroban config identity address asset_issuer_account)"
+'''
+
+[tasks.prepare_create_asset]
+cwd = "./asset_test_gen"
+script = '''
+[ -e stellar-nft-asset ] && rm -r stellar-nft-asset
+mkdir stellar-nft-asset
+cd stellar-nft-asset
+npm init -y
+npm install stellar-sdk@10.4.1
+cp ${CARGO_MAKE_WORKING_DIRECTORY}/create_nft_asset.js create_nft_asset.js
+node create_nft_asset.js $(soroban config identity show asset_issuer_account) $(soroban config identity show trader_1) $(soroban config identity show trader_2),$(soroban config identity show trader_3) > /tmp/asset_address_pair.txt
+'''
+
+[tasks.wrap_soroban_token]
+script = '''
+soroban lab token wrap --asset $(cat /tmp/asset_address_pair.txt) --network ${network} > /tmp/asset_address.txt
+'''
+
+[tasks.create_asset]
+dependencies = ["generate_asset_issuer_account", "prepare_create_asset", "wrap_soroban_token"]
+
+
+[tasks.deploy]
+plugin = "retry_script"
+script = '''
+  soroban contract deploy \
+  --source admin \
+  --wasm ../../target/wasm32-unknown-unknown/release/marketplace.wasm \
+  --network ${network} > /tmp/contract_id.txt
+'''
+
+[tasks.invoke_init]
+plugin = "retry_script"
+script = '''
+  soroban contract invoke \
+  --id $(cat /tmp/contract_id.txt) \
+  --source admin \
+  --network ${network} \
+  -- \
+  init \
+  --token $(soroban lab token id --asset native --network testnet) \
+  --admin $(soroban config identity address admin)
+'''
+
+
+[tasks.invoke_create_listing]
+plugin = "retry_script"
+script = '''
+    soroban contract invoke \
+    --id $(cat /tmp/contract_id.txt) \
+    --source trader_1 \
+    --network ${network} \
+    -- \
+    create_listing \
+    --seller $(soroban config identity address trader_1) \
+    --asset $(cat /tmp/asset_address.txt) \
+    --price 100 \
+    --quantity 1 > /tmp/asset_id.txt
+'''
+
+[tasks.invoke_get_listing]
+plugin = "retry_script"
+script = '''
+  soroban contract invoke \
+  --id $(cat /tmp/contract_id.txt) \
+  --source trader_1 \
+  --network ${network} \
+  -- \
+  get_listing \
+  --id $(cat /tmp/asset_id.txt)
+'''
+
+[tasks.invoke_update_price]
+plugin = "retry_script"
+script = '''
+  soroban contract invoke \
+  --id $(cat /tmp/contract_id.txt) \
+  --source trader_1 \
+  --network ${network} \
+  -- \
+  update_price \
+  --id $(cat /tmp/asset_id.txt) \
+  --new_price 150 \
+'''
+
+[tasks.invoke_pause_listing]
+plugin = "retry_script"
+script = '''
+  soroban contract invoke \
+  --id $(cat /tmp/contract_id.txt) \
+  --source trader_1 \
+  --network ${network} \
+  -- \
+  pause_listing \
+  --id $(cat /tmp/asset_id.txt)
+'''
+
+[tasks.invoke_unpause_listing]
+plugin = "retry_script"
+script = '''
+  soroban contract invoke \
+  --id $(cat /tmp/contract_id.txt) \
+  --source trader_1 \
+  --network ${network} \
+  -- \
+  unpause_listing \
+  --id $(cat /tmp/asset_id.txt)
+'''
+
+[tasks.invoke_register]
+plugin = "retry_script"
+script = '''
+  for TRADER in 1 2 3
+  do
+    echo "Registering trader $TRADER ..."
+
+    soroban contract invoke \
+    --id $(cat /tmp/contract_id.txt) \
+    --source trader_$TRADER \
+    --network ${network} \
+    -- \
+    register \
+    --trader $(soroban config identity address trader_$TRADER)
+  done
+'''
+
+[tasks.invoke_buy_listing]
+plugin = "retry_script"
+script = '''
+  soroban contract invoke \
+  --id $(cat /tmp/contract_id.txt) \
+  --source trader_2 \
+  --network ${network} \
+  -- \
+  buy_listing \
+  --buyer $(soroban config identity address trader_2) \
+  --id $(cat /tmp/asset_id.txt)
+'''
+
+[tasks.invoke_remove_listing]
+plugin = "retry_script"
+script = '''
+  soroban contract invoke \
+    --id $(cat /tmp/contract_id.txt) \
+    --source trader_2 \
+    --network ${network} \
+    -- \
+    create_listing \
+    --seller $(soroban config identity address trader_2) \
+    --asset $(cat /tmp/asset_address.txt) \
+    --price 100 \
+    --quantity 1 > /tmp/asset_id.txt
+
+  soroban contract invoke \
+  --id $(cat /tmp/contract_id.txt) \
+  --source trader_2 \
+  --network ${network} \
+  -- \
+  remove_listing \
+  --id $(cat /tmp/asset_id.txt)
+'''
+
+
+[tasks.invoke_contract]
+dependencies = [
+  "invoke_init",
+  "invoke_create_listing",
+  "invoke_get_listing",
+  "invoke_update_price",
+  "invoke_pause_listing",
+  "invoke_unpause_listing",
+  "invoke_register",
+  "invoke_buy_listing",
+  "invoke_remove_listing",
+]
+
+# currently this only displays balance of each player, without checking who has the most
+[tasks.get_balances]
+plugin = "retry_script"
+script = '''
+for TRADER in 1 2 3
+  do
+    soroban contract invoke \
+    --id $(soroban lab token id --asset native --network ${network}) \
+    --network ${network} \
+    -- \
+    balance \
+    --id $(soroban config identity address trader_$TRADER)
+  done
+'''
+
+[tasks.get_transactions]
+plugin = "retry_script"
+script = '''
+curl "${server}accounts/$(soroban config identity address trader_2)/transactions" > /tmp/transactions.txt
+'''
+
+[tasks.get_admin_transactions]
+plugin = "retry_script"
+script = '''
+curl "${server}accounts/$(soroban config identity address admin)/transactions" > /tmp/admin_transactions.txt
+'''
+
+[tasks.calculate_fees]
+script_runner = "node"
+script_extension = "js"
+script = '''
+let fs = require('fs')
+
+function calculateFees(file) {
+  let fee = 0
+  const transactions = fs.readFileSync(file, 'utf8')
+
+  const obj = JSON.parse(transactions)
+  const recordsSize = obj['_embedded']['records'].length
+  for (let i = 1; i < recordsSize; ++i) {
+    const tx = obj['_embedded']['records'][i]
+    fee += parseInt(tx.fee_charged)
+  }
+  return fee
+}
+
+let fee = calculateFees('/tmp/transactions.txt')
+console.log('Traders fees: ', fee)
+
+let adminFee = calculateFees('/tmp/admin_transactions.txt')
+console.log('Admin fees: ', adminFee)
+
+console.log('Total fees: ', (fee + adminFee))
+'''
+
+[tasks.run_test]
+dependencies = [
+  "accounts",
+  "create_asset",
+  "deploy",
+  "invoke_contract",
+  "get_balances",
+  "get_transactions",
+  "get_admin_transactions",
+  "calculate_fees",
+]
